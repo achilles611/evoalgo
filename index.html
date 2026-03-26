@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Evolutionary Blob Field</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="hud">
+      <div class="hud__title">Evolutionary Blob Field</div>
+      <div class="hud__disclaimer">
+        This simulation was made for the entertainment of Shy and Oryon
+      </div>
+      <div class="hud__stats" id="stats"></div>
+      <div class="hud__legend">
+        Green = baseline
+        <span class="legend legend--red">faster / shorter life</span>
+        <span class="legend legend--blue">slower / longer life</span>
+      </div>
+    </div>
+
+    <canvas id="scene" aria-label="Evolution simulation"></canvas>
+
+    <script src="./src/app.js"></script>
+  </body>
+</html>

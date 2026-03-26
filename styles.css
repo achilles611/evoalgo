@@ -1,0 +1,92 @@
+:root {
+  color-scheme: dark;
+  --bg-top: #102a43;
+  --bg-bottom: #04111d;
+  --panel: rgba(7, 20, 35, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --text-main: #ecf5ff;
+  --text-soft: #b8d1e6;
+  --accent: #f4d35e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(35, 92, 136, 0.38), transparent 35%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+  color: var(--text-main);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+body {
+  position: relative;
+}
+
+.hud {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  z-index: 2;
+  width: min(360px, calc(100vw - 36px));
+  padding: 16px 18px;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: var(--panel);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 22px 45px rgba(0, 0, 0, 0.24);
+}
+
+.hud__title {
+  margin-bottom: 10px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hud__disclaimer {
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.hud__stats {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  color: var(--text-soft);
+  line-height: 1.35;
+}
+
+.hud__legend {
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+
+.legend {
+  display: inline-block;
+  margin-left: 10px;
+  font-weight: 600;
+}
+
+.legend--red {
+  color: #ff7f66;
+}
+
+.legend--blue {
+  color: #7fb2ff;
+}
+
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
