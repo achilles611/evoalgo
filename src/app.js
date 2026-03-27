@@ -3,11 +3,14 @@ const ctx = canvas.getContext("2d");
 const statsEl = document.getElementById("stats");
 const hideHudButton = document.getElementById("hideHudButton");
 const showHudButton = document.getElementById("showHudButton");
+const bgm = document.getElementById("bgm");
 
 const CONFIG = {
   worldSize: 80,
   creatureCount: 20,
   foodCount: 10,
+  metalBlobSpeed: 5,
+  metalBlobScore: 60,
   baseSpeed: 1,
   baseLifespan: 5,
   baseSize: 1,
@@ -50,6 +53,15 @@ hideHudButton.addEventListener("click", () => {
 showHudButton.addEventListener("click", () => {
   setHudCollapsed(false);
 });
+
+bgm.volume = 0.2;
+
+function startBackgroundMusic() {
+  bgm.play().catch(() => {});
+}
+
+window.addEventListener("pointerdown", startBackgroundMusic, { once: true });
+window.addEventListener("keydown", startBackgroundMusic, { once: true });
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
@@ -114,11 +126,11 @@ function speedToSize(speed) {
 }
 
 function isBlueCreature(creature) {
-  return creature.speed < CONFIG.baseSpeed;
+  return !creature.isMetal && creature.speed < CONFIG.baseSpeed;
 }
 
 function isRedCreature(creature) {
-  return creature.speed > CONFIG.baseSpeed;
+  return !creature.isMetal && creature.speed > CONFIG.baseSpeed;
 }
 
 function areAllFoodsEaten() {
@@ -136,12 +148,15 @@ function speedToColor(speed) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function createFood() {
+function createFood(x = null, z = null, source = "field") {
+  const half = CONFIG.worldSize / 2;
+
   return {
-    x: randomRange(-CONFIG.worldSize / 2, CONFIG.worldSize / 2),
-    z: randomRange(-CONFIG.worldSize / 2, CONFIG.worldSize / 2),
+    x: x === null ? randomRange(-half, half) : clamp(x, -half, half),
+    z: z === null ? randomRange(-half, half) : clamp(z, -half, half),
     y: 0,
     eaten: false,
+    source,
   };
 }
 
@@ -181,6 +196,7 @@ function createCreature(speed, id, lineage = "seed") {
     speed,
     lifespan: speedToLifespan(speed),
     size: speedToSize(speed),
+    isMetal: false,
     hasAntenna: speed < CONFIG.baseSpeed,
     timeAlive: 0,
     alive: true,
@@ -192,6 +208,45 @@ function createCreature(speed, id, lineage = "seed") {
     timeToFood: null,
     antennaPartnerId: null,
   };
+}
+
+function createMetalBlob() {
+  const half = CONFIG.worldSize / 2;
+
+  return {
+    id: "metal-blob",
+    lineage: "metal",
+    x: -half + 8,
+    z: -half + 3,
+    y: 0,
+    heading: 0,
+    headingDrift: 0,
+    bob: randomRange(0, Math.PI * 2),
+    speed: CONFIG.metalBlobSpeed,
+    lifespan: Number.POSITIVE_INFINITY,
+    size: 1.75,
+    isMetal: true,
+    hasAntenna: false,
+    timeAlive: 0,
+    alive: true,
+    won: false,
+    foodId: null,
+    winSource: "metal",
+    score: CONFIG.metalBlobScore,
+    distanceTravelled: 0,
+    timeToFood: null,
+    antennaPartnerId: null,
+    wingPhase: randomRange(0, Math.PI * 2),
+    dropCooldown: 0.75,
+    diveFlash: 0,
+    perimeterIndex: 0,
+    lockedPreyId: null,
+    preyLockDelay: 2,
+  };
+}
+
+function getRegularCreatures() {
+  return state.creatures.filter((creature) => !creature.isMetal);
 }
 
 function getAvailableFoods() {
@@ -269,6 +324,44 @@ function findNearestAntennaTarget(creature) {
   return bestTarget;
 }
 
+function findNearestRedTarget(creature) {
+  let bestTarget = null;
+  let bestDistance = Infinity;
+
+  for (const other of state.creatures) {
+    if (
+      other.id === creature.id ||
+      !other.alive ||
+      other.won ||
+      !isRedCreature(other)
+    ) {
+      continue;
+    }
+
+    const distance = distance2D(creature.x, creature.z, other.x, other.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestTarget = other;
+    }
+  }
+
+  return bestTarget;
+}
+
+function getMetalPerimeterWaypoints() {
+  const half = CONFIG.worldSize / 2 - 5;
+  return [
+    { x: -half, z: -half },
+    { x: half, z: -half },
+    { x: half, z: half },
+    { x: -half, z: half },
+  ];
+}
+
+function findCreatureById(id) {
+  return state.creatures.find((creature) => creature.id === id) || null;
+}
+
 function findSlowerBlobAvoidance(creature) {
   if (creature.speed <= CONFIG.baseSpeed) {
     return null;
@@ -322,9 +415,10 @@ function startGeneration(parentPool = null) {
   state.foods = Array.from({ length: CONFIG.foodCount }, createFood);
 
   if (!parentPool) {
-    state.creatures = Array.from({ length: CONFIG.creatureCount }, (_, index) =>
+    const regularCreatures = Array.from({ length: CONFIG.creatureCount }, (_, index) =>
       createCreature(CONFIG.baseSpeed, index, "seed"),
     );
+    state.creatures = [...regularCreatures, createMetalBlob()];
     updateStats();
     return;
   }
@@ -349,7 +443,7 @@ function startGeneration(parentPool = null) {
     );
   }
 
-  state.creatures = nextCreatures;
+  state.creatures = [...nextCreatures, createMetalBlob()];
   updateStats();
 }
 
@@ -368,7 +462,7 @@ function weightedPick(pool) {
 }
 
 function finishGeneration() {
-  const ranked = [...state.creatures]
+  const ranked = getRegularCreatures()
     .map((creature) => {
       const timeBonus =
         creature.score > 0 && creature.timeToFood !== null
@@ -474,8 +568,100 @@ function resolveAntennaMerge(redCreature, blueCreature) {
   return true;
 }
 
+function updateMetalBlob(creature, dt) {
+  creature.timeAlive += dt;
+  creature.bob += dt * 9;
+  creature.wingPhase += dt * 12;
+  creature.score = CONFIG.metalBlobScore;
+  creature.dropCooldown = Math.max(0, creature.dropCooldown - dt);
+  creature.diveFlash = Math.max(0, creature.diveFlash - dt);
+  const perimeterWaypoints = getMetalPerimeterWaypoints();
+  const availableFoods = getAvailableFoods().length;
+  let targetRed = creature.lockedPreyId ? findCreatureById(creature.lockedPreyId) : null;
+
+  if (!targetRed || !targetRed.alive || targetRed.won || !isRedCreature(targetRed)) {
+    creature.lockedPreyId = null;
+    targetRed = null;
+  }
+
+  if (!targetRed && creature.timeAlive >= creature.preyLockDelay) {
+    const preyCandidate = findNearestRedTarget(creature);
+    if (preyCandidate) {
+      creature.lockedPreyId = preyCandidate.id;
+      targetRed = preyCandidate;
+    }
+  }
+
+  const shouldCreateFood = creature.dropCooldown <= 0 && !targetRed && availableFoods < 4;
+
+  if (shouldCreateFood) {
+    const foodX = creature.x + Math.cos(creature.heading) * 4;
+    const foodZ = creature.z + Math.sin(creature.heading) * 4;
+    state.foods.push(createFood(foodX, foodZ, "metal"));
+    creature.dropCooldown = 1.75;
+  }
+
+  let desiredHeading = creature.heading;
+  if (targetRed) {
+    desiredHeading = Math.atan2(targetRed.z - creature.z, targetRed.x - creature.x);
+  } else {
+    const targetWaypoint = perimeterWaypoints[creature.perimeterIndex];
+    const distanceToWaypoint = distance2D(creature.x, creature.z, targetWaypoint.x, targetWaypoint.z);
+    if (distanceToWaypoint <= 4) {
+      creature.perimeterIndex = (creature.perimeterIndex + 1) % perimeterWaypoints.length;
+    }
+
+    const nextWaypoint = perimeterWaypoints[creature.perimeterIndex];
+    desiredHeading = Math.atan2(nextWaypoint.z - creature.z, nextWaypoint.x - creature.x);
+  }
+
+  let deltaHeading = desiredHeading - creature.heading;
+  if (deltaHeading > Math.PI) {
+    deltaHeading -= Math.PI * 2;
+  } else if (deltaHeading < -Math.PI) {
+    deltaHeading += Math.PI * 2;
+  }
+
+  creature.heading += deltaHeading * clamp(6.5 * dt, 0, 1);
+
+  const distance = creature.speed * CONFIG.movementScale * dt;
+  creature.x += Math.cos(creature.heading) * distance;
+  creature.z += Math.sin(creature.heading) * distance;
+  creature.distanceTravelled += distance;
+
+  const half = CONFIG.worldSize / 2;
+  if (creature.x < -half || creature.x > half) {
+    creature.heading = Math.PI - creature.heading;
+    creature.x = clamp(creature.x, -half, half);
+  }
+  if (creature.z < -half || creature.z > half) {
+    creature.heading = -creature.heading;
+    creature.z = clamp(creature.z, -half, half);
+  }
+
+  if (!targetRed) {
+    return;
+  }
+
+  const catchDistance = 1.4 + creature.size + targetRed.size;
+  const distanceToTarget = distance2D(creature.x, creature.z, targetRed.x, targetRed.z);
+  if (distanceToTarget <= catchDistance) {
+    targetRed.alive = false;
+    targetRed.foodId = "metal-blob";
+    targetRed.winSource = "metal-eaten";
+    creature.diveFlash = 0.45;
+    creature.lockedPreyId = null;
+    creature.preyLockDelay = creature.timeAlive + 2;
+  }
+}
+
 function updateCreature(creature, dt) {
   if (!creature.alive || creature.won) {
+    return;
+  }
+
+  if (creature.isMetal) {
+    updateMetalBlob(creature, dt);
     return;
   }
 
@@ -577,7 +763,7 @@ function updateSimulation(dt) {
       updateCreature(creature, dt);
     }
 
-    const activeCreatures = state.creatures.some((creature) => creature.alive && !creature.won);
+    const activeCreatures = getRegularCreatures().some((creature) => creature.alive && !creature.won);
 
     if (!activeCreatures) {
       finishGeneration();
@@ -658,22 +844,107 @@ function drawFood(food) {
 
   const base = project(food.x, 0, food.z);
   const top = project(food.x, 1.8, food.z);
+  const isMetalFood = food.source === "metal";
 
-  ctx.strokeStyle = "rgba(122, 76, 24, 0.9)";
+  ctx.strokeStyle = isMetalFood ? "rgba(228, 234, 255, 0.9)" : "rgba(122, 76, 24, 0.9)";
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(base.x, base.y);
   ctx.lineTo(top.x, top.y);
   ctx.stroke();
 
-  ctx.fillStyle = "#ffd166";
+  ctx.fillStyle = isMetalFood ? "#f5fbff" : "#ffd166";
   ctx.beginPath();
   ctx.arc(top.x, top.y, 5, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "rgba(255, 222, 109, 0.2)";
+  ctx.fillStyle = isMetalFood ? "rgba(214, 241, 255, 0.24)" : "rgba(255, 222, 109, 0.2)";
   ctx.beginPath();
   ctx.arc(base.x, base.y + 2, 9, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawMetalBlob(creature, position, shadow, size) {
+  const wingSpread = size * 2.25;
+  const wingLift = Math.sin(creature.wingPhase) * size * 0.28;
+  const haloY = position.y - size * 1.25;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+  ctx.beginPath();
+  ctx.ellipse(shadow.x, shadow.y + 6, size * 2.1, size * 0.95, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(5, 5, 8, 0.95)";
+  ctx.beginPath();
+  ctx.moveTo(position.x - size * 0.65, position.y - size * 0.15);
+  ctx.bezierCurveTo(
+    position.x - wingSpread * 0.65,
+    position.y - size * 1.2 - wingLift,
+    position.x - wingSpread,
+    position.y - size * 0.05,
+    position.x - wingSpread * 0.72,
+    position.y + size * 0.68,
+  );
+  ctx.bezierCurveTo(
+    position.x - wingSpread * 0.38,
+    position.y + size * 0.18,
+    position.x - size * 0.95,
+    position.y + size * 0.1,
+    position.x - size * 0.42,
+    position.y + size * 0.72,
+  );
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(position.x + size * 0.65, position.y - size * 0.15);
+  ctx.bezierCurveTo(
+    position.x + wingSpread * 0.65,
+    position.y - size * 1.2 + wingLift,
+    position.x + wingSpread,
+    position.y - size * 0.05,
+    position.x + wingSpread * 0.72,
+    position.y + size * 0.68,
+  );
+  ctx.bezierCurveTo(
+    position.x + wingSpread * 0.38,
+    position.y + size * 0.18,
+    position.x + size * 0.95,
+    position.y + size * 0.1,
+    position.x + size * 0.42,
+    position.y + size * 0.72,
+  );
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(245, 250, 255, ${0.72 + creature.diveFlash * 0.5})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(position.x, haloY, size * 0.85, size * 0.24, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
+  ctx.beginPath();
+  ctx.ellipse(position.x, haloY, size * 1.02, size * 0.34, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#0d0d10";
+  ctx.beginPath();
+  ctx.ellipse(position.x - size * 0.16, position.y + size * 0.05, size * 0.78, size * 0.58, -0.18, 0, Math.PI * 2);
+  ctx.ellipse(position.x + size * 0.28, position.y - size * 0.06, size * 0.58, size * 0.48, 0.32, 0, Math.PI * 2);
+  ctx.ellipse(position.x, position.y - size * 0.18, size * 0.62, size * 0.42, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#eef2f7";
+  ctx.beginPath();
+  ctx.ellipse(position.x - size * 0.26, position.y - size * 0.16, size * 0.3, size * 0.2, -0.4, 0, Math.PI * 2);
+  ctx.ellipse(position.x + size * 0.18, position.y + size * 0.08, size * 0.26, size * 0.18, 0.15, 0, Math.PI * 2);
+  ctx.ellipse(position.x + size * 0.02, position.y - size * 0.3, size * 0.2, size * 0.14, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.beginPath();
+  ctx.ellipse(position.x - size * 0.22, position.y - size * 0.44, size * 0.18, size * 0.08, -0.35, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -682,9 +953,17 @@ function drawCreature(creature) {
   const position = project(creature.x, 1.2 + bounce, creature.z);
   const shadow = project(creature.x, 0.05, creature.z);
   const size = 7 + creature.size * 7;
+
+  if (creature.isMetal) {
+    drawMetalBlob(creature, position, shadow, size + 4);
+    return;
+  }
+
   const color =
     creature.winSource === "predation"
       ? "rgb(122, 18, 18)"
+      : creature.winSource === "metal-eaten"
+        ? "rgb(126, 82, 176)"
       : creature.winSource === "symbiosis-blue"
         ? "rgb(62, 108, 212)"
         : speedToColor(creature.speed);
@@ -729,12 +1008,16 @@ function drawCreature(creature) {
     ctx.stroke();
   }
 
-  if (creature.winSource === "eaten") {
-    ctx.fillStyle = "rgba(245, 245, 245, 0.92)";
-    ctx.font = `700 ${Math.max(12, Math.round(size * 1.1))}px 'Segoe UI Symbol', 'Arial Unicode MS', sans-serif`;
+  if (creature.winSource === "eaten" || creature.winSource === "metal-eaten") {
+    const metalDeath = creature.winSource === "metal-eaten";
+    ctx.fillStyle = metalDeath ? "rgba(222, 196, 255, 0.96)" : "rgba(245, 245, 245, 0.92)";
+    ctx.font = `700 ${Math.max(
+      metalDeath ? 18 : 12,
+      Math.round(size * (metalDeath ? 1.5 : 1.1)),
+    )}px 'Segoe UI Symbol', 'Arial Unicode MS', sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("\u2620", position.x, position.y - 1);
+    ctx.fillText("\u2620", position.x, position.y - (metalDeath ? size * 0.95 : 1));
   }
 
   if (creature.winSource === "symbiosis-red") {
@@ -810,19 +1093,21 @@ function drawScene() {
 }
 
 function updateStats() {
-  const winners = state.creatures.filter((creature) => creature.won).length;
-  const alive = state.creatures.filter((creature) => creature.alive && !creature.won).length;
+  const regularCreatures = getRegularCreatures();
+  const metalBlob = state.creatures.find((creature) => creature.isMetal);
+  const winners = regularCreatures.filter((creature) => creature.won).length;
+  const alive = regularCreatures.filter((creature) => creature.alive && !creature.won).length;
   const totalPoints = state.creatures.reduce((sum, creature) => sum + creature.score, 0);
   const averageSpeed =
-    state.creatures.reduce((sum, creature) => sum + creature.speed, 0) / Math.max(1, state.creatures.length);
+    regularCreatures.reduce((sum, creature) => sum + creature.speed, 0) / Math.max(1, regularCreatures.length);
   const averageSize =
-    state.creatures.reduce((sum, creature) => sum + creature.size, 0) / Math.max(1, state.creatures.length);
-  const bestSpeed = Math.max(...state.creatures.map((creature) => creature.speed));
-  const slowestSpeed = Math.min(...state.creatures.map((creature) => creature.speed));
-  const largestSize = Math.max(...state.creatures.map((creature) => creature.size));
-  const predationWins = state.creatures.filter((creature) => creature.winSource === "predation").length;
-  const foodWins = state.creatures.filter((creature) => creature.winSource === "food").length;
-  const antennaPairs = state.creatures.filter((creature) => creature.winSource === "symbiosis-blue").length;
+    regularCreatures.reduce((sum, creature) => sum + creature.size, 0) / Math.max(1, regularCreatures.length);
+  const bestSpeed = Math.max(...regularCreatures.map((creature) => creature.speed));
+  const slowestSpeed = Math.min(...regularCreatures.map((creature) => creature.speed));
+  const largestSize = Math.max(...regularCreatures.map((creature) => creature.size));
+  const predationWins = regularCreatures.filter((creature) => creature.winSource === "predation").length;
+  const foodWins = regularCreatures.filter((creature) => creature.winSource === "food").length;
+  const antennaPairs = regularCreatures.filter((creature) => creature.winSource === "symbiosis-blue").length;
   const extinct = state.phase === "cooldown" && !state.nextParentPool;
 
   statsEl.innerHTML = `
@@ -830,11 +1115,12 @@ function updateStats() {
     <div>Winners this round: <strong>${winners}/${CONFIG.creatureCount}</strong></div>
     <div>Food wins / predator wins / antenna pairs: <strong>${foodWins} / ${predationWins} / ${antennaPairs}</strong></div>
     <div>Total points earned: <strong>${totalPoints}</strong>${extinct ? " - extinction reset" : ""}</div>
+    <div>Metal blob score: <strong>${metalBlob ? metalBlob.score : 0}</strong></div>
     <div>Still searching: <strong>${alive}</strong></div>
     <div>Average speed / size: <strong>${averageSpeed.toFixed(3)} / ${averageSize.toFixed(3)}</strong></div>
     <div>Fastest / Slowest: <strong>${bestSpeed.toFixed(3)} / ${slowestSpeed.toFixed(3)}</strong></div>
     <div>Largest blob size: <strong>${largestSize.toFixed(3)}</strong></div>
-    <div>Base rules: food = 20 points, blob = 2 points, antenna merge = 10 each, zero points = extinction</div>
+    <div>Base rules: food = 20 points, blob = 2 points, antenna merge = 10 each, metal blob = 60 points</div>
     <div>Trait range: speed ${CONFIG.minSpeed.toFixed(2)}-${CONFIG.maxSpeed.toFixed(2)}, mutation +/-${Math.round(CONFIG.mutationStep * 100)}%</div>
   `;
 }

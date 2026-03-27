@@ -10,6 +10,8 @@ This simulation was made for the entertainment of Shy and Oryon.
 - Slower creatures get a longer lifespan.
 - Slower creatures also become larger in size.
 - Each new generation mutates speed by `+/-10%` across a wider `0.55` to `1.45` speed range.
+- One special metal blob appears each generation with black-and-white styling, demon wings, a glowing halo, and a fixed `60` points.
+- The metal blob moves at `5x` speed, patrols the perimeter, can create food, then locks onto a red blob after `2` seconds and swoops down to eat it.
 - Larger blobs can eat smaller blobs, and that also counts as a win.
 - Food is worth `20` points, eating another blob is worth `2`, and zero-point generations go extinct.
 - Blue blobs spawn with visible antennae, and once food is gone, hungry red blobs home in on the nearest antenna.
