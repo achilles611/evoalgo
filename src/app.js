@@ -9,14 +9,16 @@ const CONFIG = {
   baseSpeed: 1,
   baseLifespan: 5,
   baseSize: 1,
-  mutationStep: 0.03,
-  minSpeed: 0.7,
-  maxSpeed: 1.3,
+  mutationStep: 0.1,
+  minSpeed: 0.55,
+  maxSpeed: 1.45,
   eatDistance: 2.4,
   senseRadius: 18,
   wanderTurnSpeed: 2.2,
   generationCooldown: 1.2,
   movementScale: 14,
+  colorSpread: 0.22,
+  specializationBias: 60,
 };
 
 const state = {
@@ -97,8 +99,20 @@ function speedToSize(speed) {
   return CONFIG.baseSize * (CONFIG.baseSpeed / speed);
 }
 
+function isBlueCreature(creature) {
+  return creature.speed < CONFIG.baseSpeed;
+}
+
+function isRedCreature(creature) {
+  return creature.speed > CONFIG.baseSpeed;
+}
+
+function areAllFoodsEaten() {
+  return state.foods.every((food) => food.eaten);
+}
+
 function speedToColor(speed) {
-  const delta = clamp((speed - CONFIG.baseSpeed) / 0.3, -1, 1);
+  const delta = clamp((speed - CONFIG.baseSpeed) / CONFIG.colorSpread, -1, 1);
   const faster = Math.max(0, delta);
   const slower = Math.max(0, -delta);
 
@@ -153,6 +167,7 @@ function createCreature(speed, id, lineage = "seed") {
     speed,
     lifespan: speedToLifespan(speed),
     size: speedToSize(speed),
+    hasAntenna: speed < CONFIG.baseSpeed,
     timeAlive: 0,
     alive: true,
     won: false,
@@ -161,6 +176,7 @@ function createCreature(speed, id, lineage = "seed") {
     score: 0,
     distanceTravelled: 0,
     timeToFood: null,
+    antennaPartnerId: null,
   };
 }
 
@@ -168,7 +184,7 @@ function getAvailableFoods() {
   return state.foods.filter((food) => !food.eaten);
 }
 
-function findSensedFood(creature) {
+function findClosestFood(creature) {
   let bestFood = null;
   let bestDistance = Infinity;
 
@@ -178,7 +194,7 @@ function findSensedFood(creature) {
     }
 
     const distance = distance2D(creature.x, creature.z, food.x, food.z);
-    if (distance <= CONFIG.senseRadius && distance < bestDistance) {
+    if (distance < bestDistance) {
       bestDistance = distance;
       bestFood = food;
     }
@@ -209,6 +225,80 @@ function findSensedPrey(creature) {
   }
 
   return bestTarget;
+}
+
+function findNearestAntennaTarget(creature) {
+  if (!isRedCreature(creature) || creature.score > 0) {
+    return null;
+  }
+
+  let bestTarget = null;
+  let bestDistance = Infinity;
+
+  for (const other of state.creatures) {
+    if (
+      other.id === creature.id ||
+      !other.alive ||
+      !other.hasAntenna ||
+      other.antennaPartnerId !== null
+    ) {
+      continue;
+    }
+
+    const distance = distance2D(creature.x, creature.z, other.x, other.z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestTarget = other;
+    }
+  }
+
+  return bestTarget;
+}
+
+function findSlowerBlobAvoidance(creature) {
+  if (creature.speed <= CONFIG.baseSpeed) {
+    return null;
+  }
+
+  let avoidX = 0;
+  let avoidZ = 0;
+  let threatWeight = 0;
+
+  for (const other of state.creatures) {
+    if (
+      other.id === creature.id ||
+      !other.alive ||
+      other.won ||
+      other.speed >= CONFIG.baseSpeed
+    ) {
+      continue;
+    }
+
+    const dx = creature.x - other.x;
+    const dz = creature.z - other.z;
+    const distance = Math.hypot(dx, dz);
+    const dangerRadius = CONFIG.senseRadius * 0.85;
+
+    if (distance === 0 || distance > dangerRadius) {
+      continue;
+    }
+
+    const closeness = 1 - distance / dangerRadius;
+    const weight = closeness * (1 + Math.max(0, other.size - creature.size));
+
+    avoidX += (dx / distance) * weight;
+    avoidZ += (dz / distance) * weight;
+    threatWeight += weight;
+  }
+
+  if (threatWeight <= 0) {
+    return null;
+  }
+
+  return {
+    heading: Math.atan2(avoidZ, avoidX),
+    strength: threatWeight,
+  };
 }
 
 function startGeneration(parentPool = null) {
@@ -266,17 +356,24 @@ function weightedPick(pool) {
 function finishGeneration() {
   const ranked = [...state.creatures]
     .map((creature) => {
-      const successBonus = creature.won ? 1000 : 0;
-      const timeBonus = creature.won && creature.timeToFood !== null ? (creature.lifespan - creature.timeToFood) * 40 : 0;
-      const rangeBonus = creature.distanceTravelled * 0.25;
-      const survivalBonus = creature.alive ? 10 : 0;
+      const timeBonus =
+        creature.score > 0 && creature.timeToFood !== null
+          ? Math.max(0, creature.lifespan - creature.timeToFood)
+          : 0;
+      const specializationBonus =
+        creature.score > 0
+          ? Math.abs(creature.speed - CONFIG.baseSpeed) * CONFIG.specializationBias
+          : 0;
+      const selectionWeight = creature.score * 100 + timeBonus + specializationBonus;
 
       return {
         ...creature,
-        selectionWeight: Math.max(1, successBonus + timeBonus + rangeBonus + survivalBonus),
+        selectionWeight,
       };
     })
     .sort((a, b) => b.selectionWeight - a.selectionWeight);
+
+  const breeders = ranked.filter((creature) => creature.score > 0);
 
   const winners = ranked.filter((creature) => creature.won).length;
   const best = ranked[0];
@@ -292,7 +389,7 @@ function finishGeneration() {
 
   state.phase = "cooldown";
   state.cooldown = CONFIG.generationCooldown;
-  state.nextParentPool = ranked;
+  state.nextParentPool = breeders.length > 0 ? breeders : null;
   updateStats();
 }
 
@@ -317,12 +414,50 @@ function resolveCreatureHunt(creature) {
       creature.won = true;
       creature.foodId = `blob-${other.id}`;
       creature.winSource = "predation";
+      creature.score = 2;
       creature.timeToFood = creature.timeAlive;
       return true;
     }
   }
 
   return false;
+}
+
+function resolveAntennaMerge(redCreature, blueCreature) {
+  if (
+    !redCreature ||
+    !blueCreature ||
+    !redCreature.alive ||
+    !blueCreature.alive ||
+    redCreature.antennaPartnerId !== null ||
+    blueCreature.antennaPartnerId !== null
+  ) {
+    return false;
+  }
+
+  const catchDistance = 1.2 + redCreature.size + blueCreature.size;
+  const distanceToOther = distance2D(redCreature.x, redCreature.z, blueCreature.x, blueCreature.z);
+
+  if (distanceToOther > catchDistance) {
+    return false;
+  }
+
+  redCreature.won = true;
+  redCreature.alive = false;
+  redCreature.score = Math.max(redCreature.score, 10);
+  redCreature.foodId = `antenna-${blueCreature.id}`;
+  redCreature.winSource = "symbiosis-red";
+  redCreature.timeToFood = redCreature.timeAlive;
+  redCreature.antennaPartnerId = blueCreature.id;
+
+  blueCreature.won = true;
+  blueCreature.score = Math.max(blueCreature.score, 10);
+  blueCreature.foodId = `antenna-${redCreature.id}`;
+  blueCreature.winSource = "symbiosis-blue";
+  blueCreature.timeToFood = blueCreature.timeAlive || redCreature.timeAlive;
+  blueCreature.antennaPartnerId = redCreature.id;
+
+  return true;
 }
 
 function updateCreature(creature, dt) {
@@ -337,27 +472,37 @@ function updateCreature(creature, dt) {
     return;
   }
 
-  const targetFood = findSensedFood(creature);
-  const targetPrey = findSensedPrey(creature);
+  const noFoodLeft = areAllFoodsEaten();
+  const targetFood = noFoodLeft ? null : findClosestFood(creature);
+  const targetAntenna = noFoodLeft ? findNearestAntennaTarget(creature) : null;
+  const targetPrey = targetFood || targetAntenna ? null : findSensedPrey(creature);
+  const avoidThreat = findSlowerBlobAvoidance(creature);
   let desiredHeading = creature.heading;
 
-  if (targetFood || targetPrey) {
-    const foodDistance = targetFood
-      ? distance2D(creature.x, creature.z, targetFood.x, targetFood.z)
-      : Infinity;
-    const preyDistance = targetPrey
-      ? distance2D(creature.x, creature.z, targetPrey.x, targetPrey.z)
-      : Infinity;
-    const target =
-      preyDistance < Infinity && preyDistance <= foodDistance * 1.15
-        ? targetPrey
-        : targetFood;
-
+  if (targetFood || targetAntenna || targetPrey) {
+    const target = targetFood || targetAntenna || targetPrey;
     desiredHeading = Math.atan2(target.z - creature.z, target.x - creature.x);
+    if (targetAntenna) {
+      creature.headingDrift *= 0.9;
+    }
   } else {
     creature.headingDrift += randomRange(-1, 1) * dt * 0.9;
     creature.headingDrift = clamp(creature.headingDrift, -1.4, 1.4);
     desiredHeading = creature.heading + creature.headingDrift * CONFIG.wanderTurnSpeed * dt;
+  }
+
+  if (avoidThreat) {
+    const targetVectorX = Math.cos(desiredHeading);
+    const targetVectorZ = Math.sin(desiredHeading);
+    const avoidVectorX = Math.cos(avoidThreat.heading);
+    const avoidVectorZ = Math.sin(avoidThreat.heading);
+    const avoidStrength = clamp(avoidThreat.strength / 2.5, 0.35, 0.88);
+    const targetStrength = 1 - avoidStrength;
+
+    desiredHeading = Math.atan2(
+      targetVectorZ * targetStrength + avoidVectorZ * avoidStrength,
+      targetVectorX * targetStrength + avoidVectorX * avoidStrength,
+    );
   }
 
   let deltaHeading = desiredHeading - creature.heading;
@@ -385,7 +530,11 @@ function updateCreature(creature, dt) {
     creature.z = clamp(creature.z, -half, half);
   }
 
-  if (resolveCreatureHunt(creature)) {
+  if (targetAntenna && resolveAntennaMerge(creature, targetAntenna)) {
+    return;
+  }
+
+  if (!targetAntenna && resolveCreatureHunt(creature)) {
     return;
   }
 
@@ -401,6 +550,7 @@ function updateCreature(creature, dt) {
       creature.won = true;
       creature.foodId = `${food.x.toFixed(2)}:${food.z.toFixed(2)}`;
       creature.winSource = "food";
+      creature.score = 20;
       creature.timeToFood = creature.timeAlive;
       return;
     }
@@ -519,7 +669,11 @@ function drawCreature(creature) {
   const shadow = project(creature.x, 0.05, creature.z);
   const size = 7 + creature.size * 7;
   const color =
-    creature.winSource === "predation" ? "rgb(122, 18, 18)" : speedToColor(creature.speed);
+    creature.winSource === "predation"
+      ? "rgb(122, 18, 18)"
+      : creature.winSource === "symbiosis-blue"
+        ? "rgb(62, 108, 212)"
+        : speedToColor(creature.speed);
 
   ctx.fillStyle = creature.alive ? "rgba(0, 0, 0, 0.22)" : "rgba(0, 0, 0, 0.12)";
   ctx.beginPath();
@@ -530,6 +684,23 @@ function drawCreature(creature) {
   ctx.beginPath();
   ctx.ellipse(position.x, position.y, size * 1.05, size * 0.8, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  if (creature.hasAntenna) {
+    const antennaHeight = size * 1.1;
+    const antennaLean = size * 0.16;
+
+    ctx.strokeStyle = creature.winSource === "symbiosis-blue" ? "rgba(132, 190, 255, 0.95)" : "rgba(158, 208, 255, 0.88)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(position.x + size * 0.1, position.y - size * 0.25);
+    ctx.lineTo(position.x + antennaLean, position.y - antennaHeight);
+    ctx.stroke();
+
+    ctx.fillStyle = creature.winSource === "symbiosis-blue" ? "rgba(214, 241, 255, 0.98)" : "rgba(123, 204, 255, 0.96)";
+    ctx.beginPath();
+    ctx.arc(position.x + antennaLean, position.y - antennaHeight, Math.max(3, size * 0.16), 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
   ctx.beginPath();
@@ -549,7 +720,15 @@ function drawCreature(creature) {
     ctx.font = `700 ${Math.max(12, Math.round(size * 1.1))}px 'Segoe UI Symbol', 'Arial Unicode MS', sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("☠", position.x, position.y - 1);
+    ctx.fillText("\u2620", position.x, position.y - 1);
+  }
+
+  if (creature.winSource === "symbiosis-red") {
+    ctx.strokeStyle = "rgba(132, 190, 255, 0.82)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, size * 0.95, 0, Math.PI * 2);
+    ctx.stroke();
   }
 }
 
@@ -619,6 +798,7 @@ function drawScene() {
 function updateStats() {
   const winners = state.creatures.filter((creature) => creature.won).length;
   const alive = state.creatures.filter((creature) => creature.alive && !creature.won).length;
+  const totalPoints = state.creatures.reduce((sum, creature) => sum + creature.score, 0);
   const averageSpeed =
     state.creatures.reduce((sum, creature) => sum + creature.speed, 0) / Math.max(1, state.creatures.length);
   const averageSize =
@@ -627,16 +807,21 @@ function updateStats() {
   const slowestSpeed = Math.min(...state.creatures.map((creature) => creature.speed));
   const largestSize = Math.max(...state.creatures.map((creature) => creature.size));
   const predationWins = state.creatures.filter((creature) => creature.winSource === "predation").length;
+  const foodWins = state.creatures.filter((creature) => creature.winSource === "food").length;
+  const antennaPairs = state.creatures.filter((creature) => creature.winSource === "symbiosis-blue").length;
+  const extinct = state.phase === "cooldown" && !state.nextParentPool;
 
   statsEl.innerHTML = `
     <div>Generation: <strong>${state.generation}</strong> (${state.phase})</div>
     <div>Winners this round: <strong>${winners}/${CONFIG.creatureCount}</strong></div>
-    <div>Wins by eating blobs: <strong>${predationWins}</strong></div>
+    <div>Food wins / predator wins / antenna pairs: <strong>${foodWins} / ${predationWins} / ${antennaPairs}</strong></div>
+    <div>Total points earned: <strong>${totalPoints}</strong>${extinct ? " - extinction reset" : ""}</div>
     <div>Still searching: <strong>${alive}</strong></div>
     <div>Average speed / size: <strong>${averageSpeed.toFixed(3)} / ${averageSize.toFixed(3)}</strong></div>
     <div>Fastest / Slowest: <strong>${bestSpeed.toFixed(3)} / ${slowestSpeed.toFixed(3)}</strong></div>
     <div>Largest blob size: <strong>${largestSize.toFixed(3)}</strong></div>
-    <div>Base rules: speed 1.0, lifespan 5.0s, mutation +/-3%</div>
+    <div>Base rules: food = 20 points, blob = 2 points, antenna merge = 10 each, zero points = extinction</div>
+    <div>Trait range: speed ${CONFIG.minSpeed.toFixed(2)}-${CONFIG.maxSpeed.toFixed(2)}, mutation +/-${Math.round(CONFIG.mutationStep * 100)}%</div>
   `;
 }
 
