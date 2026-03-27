@@ -106,6 +106,43 @@ body {
   line-height: 1.35;
 }
 
+.hud__actions {
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.hud__music {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 10px 14px;
+  transition:
+    transform 0.16s ease,
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.hud__music:hover,
+.hud__music:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.hud__music.is-playing {
+  background: rgba(244, 211, 94, 0.18);
+  border-color: rgba(244, 211, 94, 0.42);
+  color: #fff2bf;
+}
+
 .hud__stats {
   display: grid;
   gap: 5px;

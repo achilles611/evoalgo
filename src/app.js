@@ -3,6 +3,7 @@ const ctx = canvas.getContext("2d");
 const statsEl = document.getElementById("stats");
 const hideHudButton = document.getElementById("hideHudButton");
 const showHudButton = document.getElementById("showHudButton");
+const musicToggleButton = document.getElementById("musicToggleButton");
 const bgm = document.getElementById("bgm");
 
 const CONFIG = {
@@ -55,13 +56,45 @@ showHudButton.addEventListener("click", () => {
 });
 
 bgm.volume = 0.2;
+bgm.muted = false;
+bgm.playsInline = true;
 
-function startBackgroundMusic() {
-  bgm.play().catch(() => {});
+function updateMusicButton() {
+  const playing = !bgm.paused;
+  musicToggleButton.textContent = playing ? "Pause Music" : "Play Music";
+  musicToggleButton.classList.toggle("is-playing", playing);
 }
+
+async function startBackgroundMusic() {
+  try {
+    await bgm.play();
+    updateMusicButton();
+  } catch (_error) {
+    updateMusicButton();
+  }
+}
+
+async function toggleBackgroundMusic() {
+  if (bgm.paused) {
+    await startBackgroundMusic();
+    return;
+  }
+
+  bgm.pause();
+  updateMusicButton();
+}
+
+musicToggleButton.addEventListener("click", () => {
+  toggleBackgroundMusic().catch(() => {});
+});
+
+bgm.addEventListener("play", updateMusicButton);
+bgm.addEventListener("pause", updateMusicButton);
+bgm.addEventListener("ended", updateMusicButton);
 
 window.addEventListener("pointerdown", startBackgroundMusic, { once: true });
 window.addEventListener("keydown", startBackgroundMusic, { once: true });
+updateMusicButton();
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
