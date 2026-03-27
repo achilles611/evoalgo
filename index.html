@@ -8,6 +8,9 @@
   </head>
   <body>
     <div class="hud">
+      <button class="hud__toggle" id="hideHudButton" type="button" aria-label="Hide simulation details">
+        -
+      </button>
       <div class="hud__title">Evolutionary Blob Field</div>
       <div class="hud__disclaimer">
         This simulation was made for the entertainment of Shy and Oryon
@@ -19,6 +22,9 @@
         <span class="legend legend--blue">slower / longer life</span>
       </div>
     </div>
+    <button class="hud__restore" id="showHudButton" type="button" aria-label="Show simulation details">
+      +
+    </button>
 
     <canvas id="scene" aria-label="Evolution simulation"></canvas>
 

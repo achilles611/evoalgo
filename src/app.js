@@ -1,6 +1,8 @@
 const canvas = document.getElementById("scene");
 const ctx = canvas.getContext("2d");
 const statsEl = document.getElementById("stats");
+const hideHudButton = document.getElementById("hideHudButton");
+const showHudButton = document.getElementById("showHudButton");
 
 const CONFIG = {
   worldSize: 80,
@@ -36,6 +38,18 @@ const state = {
   nextParentPool: null,
   previousTime: 0,
 };
+
+function setHudCollapsed(collapsed) {
+  document.body.classList.toggle("hud-collapsed", collapsed);
+}
+
+hideHudButton.addEventListener("click", () => {
+  setHudCollapsed(true);
+});
+
+showHudButton.addEventListener("click", () => {
+  setHudCollapsed(false);
+});
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
